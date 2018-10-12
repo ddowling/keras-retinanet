@@ -18,6 +18,7 @@ import keras
 from .. import initializers
 from .. import layers
 from ..utils.anchors import AnchorParameters
+from . import check_training_model
 
 
 def default_classification_model(
@@ -322,6 +323,8 @@ def retinanet_bbox(
     # create RetinaNet model
     if model is None:
         model = retinanet(num_anchors=anchor_params.num_anchors(), **kwargs)
+    else:
+        check_training_model(model)
 
     # compute the anchors
     features = [model.get_layer(p_name).output for p_name in ['P3', 'P4', 'P5', 'P6', 'P7']]

@@ -1,3 +1,7 @@
+from __future__ import print_function
+import sys
+
+
 class Backbone(object):
     """ This class stores additional information on backbones.
     """
@@ -87,3 +91,20 @@ def load_model(filepath, backbone_name='resnet50', convert=False, nms=True, clas
         model = retinanet_bbox(model=model, nms=nms, class_specific_filter=class_specific_filter, anchor_params=anchor_params)
 
     return model
+
+
+def assert_training_model(model):
+    """ Assert that the model is a training model.
+    """
+    assert('regression' in model.output_names), "No 'regression' output found in model (outputs: {}), input is not a training model.".format(model.output_names)
+    assert('classification' in model.output_names), "No 'classification' output found in model (outputs: {}), input is not a training model.".format(model.output_names)
+
+
+def check_training_model(model):
+    """ Check that model is a training model and exit otherwise.
+    """
+    try:
+        assert_training_model(model)
+    except AssertionError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
