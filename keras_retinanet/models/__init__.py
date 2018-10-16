@@ -81,7 +81,7 @@ def load_model(filepath, backbone_name='resnet50', convert=False, nms=True, clas
     """
     import keras.models
 
-    model = keras.models.load_model(filepath, custom_objects=backbone(backbone_name).custom_objects,compile=convert)
+    model = keras.models.load_model(filepath, custom_objects=backbone(backbone_name).custom_objects, compile=convert)
     if convert:
         from .retinanet import retinanet_bbox
         model = retinanet_bbox(model=model, nms=nms, class_specific_filter=class_specific_filter, anchor_params=anchor_params)
