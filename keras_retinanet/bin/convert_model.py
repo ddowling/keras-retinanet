@@ -65,15 +65,20 @@ def main(args=None):
     keras.backend.tensorflow_backend.set_session(get_session())
 
     # optionally load config parameters
-    anchor_params = None
+    anchor_parameters = None
     if args.config:
         args.config = read_config_file(args.config)
-
         if 'anchor_parameters' in args.config:
-            anchor_params = parse_anchor_parameters(args.config)
+            anchor_parameters = parse_anchor_parameters(args.config)
 
-    # load and convert model
-    model = models.load_model(args.model_in, convert=True, backbone_name=args.backbone, nms=args.nms, class_specific_filter=args.class_specific_filter, anchor_params=anchor_params)
+    # load the model
+    model = models.load_model(args.model_in, backbone_name=args.backbone)
+
+    # check if this is indeed a training model
+    models.check_training_model(model)
+
+    # convert the model
+    model = models.convert_model(model, nms=args.nms, class_specific_filter=args.class_specific_filter, anchor_params=anchor_parameters)
 
     # save model
     model.save(args.model_out)
