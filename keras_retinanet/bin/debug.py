@@ -17,6 +17,7 @@ limitations under the License.
 """
 
 import argparse
+import random
 import os
 import sys
 import cv2
@@ -35,7 +36,7 @@ from ..preprocessing.open_images import OpenImagesGenerator
 from ..utils.keras_version import check_keras_version
 from ..utils.transform import random_transform_generator
 from ..utils.visualization import draw_annotations, draw_boxes
-from ..utils.anchors import anchors_for_shape, compute_gt_annotations
+from ..utils.anchors import anchors_for_shape, compute_gt_annotations, compute_gt_annotations_for_visualisation
 from ..utils.config import read_config_file, parse_anchor_parameters
 
 
@@ -158,6 +159,8 @@ def parse_args(args):
     parser.add_argument('--random-transform', help='Randomly transform image and annotations.', action='store_true')
     parser.add_argument('--image-min-side', help='Rescale the image so the smallest side is min_side.', type=int, default=800)
     parser.add_argument('--image-max-side', help='Rescale the image if the largest side is larger than max_side.', type=int, default=1333)
+    parser.add_argument('--positive_overlap_iou', help='IoU overlap or positive anchors (all anchors with overlap > positive_overlap are positive)', type=float, default=0.5)
+    parser.add_argument('--negative_overlap_iou', help='IoU overlap for negative anchors (all anchors with overlap < negative_overlap are negative).', type=float, default=0.4)
     parser.add_argument('--config', help='Path to a configuration parameters .ini file.')
 
     return parser.parse_args(args)
@@ -175,31 +178,47 @@ def run(generator, args, anchor_params):
         # load the data
         image       = generator.load_image(i)
         annotations = generator.load_annotations(i)
+        if len(annotations['labels']) > 0 :
+            # apply random transformations
+            if args.random_transform:
+                image, annotations = generator.random_transform_group_entry(image, annotations)
+                print("Applying random_transforms")
 
-        # apply random transformations
-        if args.random_transform:
-            image, annotations = generator.random_transform_group_entry(image, annotations)
+            # resize the image and annotations
+            if args.resize:
+                image, image_scale = generator.resize_image(image)
+                annotations['bboxes'] *= image_scale
 
-        # resize the image and annotations
-        if args.resize:
-            image, image_scale = generator.resize_image(image)
-            annotations['bboxes'] *= image_scale
+            anchors = anchors_for_shape(image.shape, anchor_params=anchor_params)
+            positive_indices, _, some_overlap_indices, max_indices = compute_gt_annotations_for_visualisation(anchors, annotations['bboxes'], negative_overlap=args.negative_overlap_iou, positive_overlap=args.positive_overlap_iou)
 
-        anchors = anchors_for_shape(image.shape, anchor_params=anchor_params)
-        positive_indices, _, max_indices = compute_gt_annotations(anchors, annotations['bboxes'])
+            # Find the annotations that only have 'some' overlap (i.e. not enough to be a 'positive' index)
+            red_boxes_indices_set = set(max_indices[some_overlap_indices]).difference(set(max_indices[positive_indices]))
+            red_boxes_indices_list = list(red_boxes_indices_set)
 
-        # draw anchors on the image
-        if args.anchors:
-            draw_boxes(image, anchors[positive_indices], (255, 255, 0), thickness=1)
+            # Find all overlapping anchors for these annotations
+            if(len(red_boxes_indices_list) > 0):
+                _, red_ignore_indices, _, red_max_indices = compute_gt_annotations_for_visualisation(anchors, annotations['bboxes'][red_boxes_indices_list, :], negative_overlap=0.01, positive_overlap=args.positive_overlap_iou)
+                
+                # Draw boxes of anchors that were close but not quite enough for the annotation
+                # As there are so many anchors, only show 10% of them
+                close_anchors = anchors[red_ignore_indices]
+                random_close_anchors_indices = random.choices(range(0, len(close_anchors)), k = int(0.1 * len(close_anchors)))
+                draw_boxes(image, close_anchors[random_close_anchors_indices, :], (0, 255, 255), thickness=1)
 
-        # draw annotations on the image
-        if args.annotations:
-            # draw annotations in red
-            draw_annotations(image, annotations, color=(0, 0, 255), label_to_name=generator.label_to_name)
+            # import pdb; pdb.set_trace()
+            # draw anchors on the image
+            if args.anchors:
+                draw_boxes(image, anchors[positive_indices], (255, 255, 0), thickness=1)
 
-            # draw regressed anchors in green to override most red annotations
-            # result is that annotations without anchors are red, with anchors are green
-            draw_boxes(image, annotations['bboxes'][max_indices[positive_indices], :], (0, 255, 0))
+            # draw annotations on the image
+            if args.annotations:
+                # draw annotations in red
+                draw_annotations(image, annotations, color=(0, 0, 255), label_to_name=generator.label_to_name)
+
+                # draw regressed anchors in green to override most red annotations
+                # result is that annotations without anchors are red, with anchors are green
+                draw_boxes(image, annotations['bboxes'][max_indices[positive_indices], :], (0, 255, 0))
 
         cv2.imshow('Image', image)
         if cv2.waitKey() == ord('q'):

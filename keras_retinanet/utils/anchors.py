@@ -55,8 +55,8 @@ def anchor_targets_bbox(
     image_group,
     annotations_group,
     num_classes,
-    negative_overlap=0.4,
-    positive_overlap=0.5
+    negative_overlap=0.1,
+    positive_overlap=0.1
 ):
     """ Generate anchor targets for bbox detection.
 
@@ -119,8 +119,8 @@ def anchor_targets_bbox(
 def compute_gt_annotations(
     anchors,
     annotations,
-    negative_overlap=0.4,
-    positive_overlap=0.5
+    negative_overlap,
+    positive_overlap
 ):
     """ Obtain indices of gt annotations with the greatest overlap.
 
@@ -143,9 +143,34 @@ def compute_gt_annotations(
     # assign "dont care" labels
     positive_indices = max_overlaps >= positive_overlap
     ignore_indices = (max_overlaps > negative_overlap) & ~positive_indices
-
     return positive_indices, ignore_indices, argmax_overlaps_inds
 
+def compute_gt_annotations_for_visualisation(anchors, annotations, negative_overlap, positive_overlap):
+    """ Obtain indices of gt annotations with the greatest overlap.
+
+    Args
+        anchors: np.array of annotations of shape (N, 4) for (x1, y1, x2, y2).
+        annotations: np.array of shape (N, 5) for (x1, y1, x2, y2, label).
+        negative_overlap: IoU overlap for negative anchors (all anchors with overlap < negative_overlap are negative).
+        positive_overlap: IoU overlap or positive anchors (all anchors with overlap > positive_overlap are positive).
+
+    Returns
+        positive_indices: indices of positive anchors
+        ignore_indices: indices anchors that are below positive_overlap and above negative_overlap, i.e. indices ignored during training
+        
+        argmax_overlaps_inds: ordered overlaps indices
+    """
+
+    overlaps = compute_overlap(anchors.astype(np.float64), annotations.astype(np.float64))
+    argmax_overlaps_inds = np.argmax(overlaps, axis=1)
+    max_overlaps = overlaps[np.arange(overlaps.shape[0]), argmax_overlaps_inds]
+
+    # assign "dont care" labels
+    positive_indices = max_overlaps >= positive_overlap
+    ignore_indices = (max_overlaps > negative_overlap) & ~positive_indices
+    some_overlap_indices = (max_overlaps < positive_overlap) & (max_overlaps != 0.0)
+
+    return positive_indices, ignore_indices, some_overlap_indices, argmax_overlaps_inds
 
 def layer_shapes(image_shape, model):
     """Compute layer shapes given input image shape and the model.
