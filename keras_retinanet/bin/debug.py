@@ -206,7 +206,6 @@ def run(generator, args, anchor_params):
                 random_close_anchors_indices = random.choices(range(0, len(close_anchors)), k = int(0.1 * len(close_anchors)))
                 draw_boxes(image, close_anchors[random_close_anchors_indices, :], (0, 255, 255), thickness=1)
 
-            # import pdb; pdb.set_trace()
             # draw anchors on the image
             if args.anchors:
                 draw_boxes(image, anchors[positive_indices], (255, 255, 0), thickness=1)
