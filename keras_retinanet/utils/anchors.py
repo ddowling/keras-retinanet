@@ -1,3 +1,4 @@
+
 """
 Copyright 2017-2018 Fizyr (https://fizyr.com)
 
@@ -55,8 +56,7 @@ def anchor_targets_bbox(
     image_group,
     annotations_group,
     num_classes,
-    negative_overlap=0.1,
-    positive_overlap=0.1
+    config
 ):
     """ Generate anchor targets for bbox detection.
 
@@ -65,9 +65,7 @@ def anchor_targets_bbox(
         image_group: List of BGR images.
         annotations_group: List of annotations (np.array of shape (N, 5) for (x1, y1, x2, y2, label)).
         num_classes: Number of classes to predict.
-        mask_shape: If the image is padded with zeros, mask_shape can be used to mark the relevant part of the image.
-        negative_overlap: IoU overlap for negative anchors (all anchors with overlap < negative_overlap are negative).
-        positive_overlap: IoU overlap or positive anchors (all anchors with overlap > positive_overlap are positive).
+        config: Object to read configurable negative_overlap and positive_overlap
 
     Returns
         labels_batch: batch that contains labels & anchor states (np.array of shape (batch_size, N, num_classes + 1),
@@ -84,6 +82,15 @@ def anchor_targets_bbox(
         assert('labels' in annotations), "Annotations should contain labels."
 
     batch_size = len(image_group)
+
+    # negative_overlap: IoU overlap for negative anchors (all anchors with overlap < negative_overlap are negative).
+    negative_overlap = config.getfloat('anchor_parameters',
+                                       'negative_overlap',
+                                       fallback=0.4)
+    # positive_overlap: IoU overlap or positive anchors (all anchors with overlap > positive_overlap are positive).
+    positive_overlap=config.getfloat('anchor_parameters',
+                                     'positive_overlap',
+                                     fallback=0.5)
 
     regression_batch  = np.zeros((batch_size, anchors.shape[0], 4 + 1), dtype=keras.backend.floatx())
     labels_batch      = np.zeros((batch_size, anchors.shape[0], num_classes + 1), dtype=keras.backend.floatx())
@@ -145,6 +152,7 @@ def compute_gt_annotations(
     ignore_indices = (max_overlaps > negative_overlap) & ~positive_indices
     return positive_indices, ignore_indices, argmax_overlaps_inds
 
+
 def compute_gt_annotations_for_visualisation(anchors, annotations, negative_overlap, positive_overlap):
     """ Obtain indices of gt annotations with the greatest overlap.
 
@@ -171,6 +179,7 @@ def compute_gt_annotations_for_visualisation(anchors, annotations, negative_over
     some_overlap_indices = (max_overlaps < positive_overlap) & (max_overlaps != 0.0)
 
     return positive_indices, ignore_indices, some_overlap_indices, argmax_overlaps_inds
+
 
 def layer_shapes(image_shape, model):
     """Compute layer shapes given input image shape and the model.
