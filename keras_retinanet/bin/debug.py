@@ -16,6 +16,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from scipy import stats
+
 import argparse
 import random
 import os
@@ -162,9 +164,80 @@ def parse_args(args):
     parser.add_argument('--positive_overlap_iou', help='IoU overlap or positive anchors (all anchors with overlap > positive_overlap are positive)', type=float, default=0.5)
     parser.add_argument('--negative_overlap_iou', help='IoU overlap for negative anchors (all anchors with overlap < negative_overlap are negative).', type=float, default=0.4)
     parser.add_argument('--config', help='Path to a configuration parameters .ini file.')
+    parser.add_argument('--stats', help='Calculates and prints stats about the anchor coverage across the dataset', action='store_true')
 
     return parser.parse_args(args)
 
+def calculate_stats(generator, args, anchor_params):
+    """ Calculates stats for anchor coverage over given dataset.
+        Output stats include:
+        - Average number of positive & negative anchors per image
+        - Max/min number of positive anchors in dataset
+        - Proportion of positive to negative anchors across dataset
+    """
+    
+    annotations_count = []
+    missed_annotations_count = []
+    positive_anchors_count = []
+    negative_anchors_count = []
+
+    num_images = generator.size()
+    image_scale = None
+    image_shape = None
+
+    print("\n")
+    for i in range(num_images):
+        print("Processing {}/{} ".format(i, num_images), end="\r")
+
+        annotations = generator.load_annotations(i)
+        
+        # Skip if there is no annotation label
+        if len(annotations['labels']) == 0:
+            continue
+
+        # Resize the image and annotations
+        # Save the relevant image properties (scale and shape) once and reuse - as we know that all images will have same properties
+        # Saving these properties significantly speeds up the process
+        if args.resize:
+            if(image_scale is None):
+                image = generator.load_image(i)
+                image, image_scale = generator.resize_image(image)
+                image_shape = image.shape
+
+            annotations['bboxes'] *= image_scale
+        else:
+            if(image_shape is None):
+                image = generator.load_image(i)
+                image_shape = image.shape
+
+        anchors = anchors_for_shape(image_shape, anchor_params=anchor_params)
+        positive_indices, _, _, max_indices = compute_gt_annotations_for_visualisation(anchors, annotations['bboxes'], negative_overlap=args.negative_overlap_iou, positive_overlap=args.positive_overlap_iou)
+        
+        num_annotations = annotations['bboxes'].shape[0]
+        missed_annotations = num_annotations - len(set(max_indices[positive_indices]))
+        num_positive_anchors = annotations['bboxes'][max_indices[positive_indices], :].shape[0]
+
+        annotations_count.append(num_annotations)
+        missed_annotations_count.append(missed_annotations)
+        positive_anchors_count.append(num_positive_anchors)
+        negative_anchors_count.append(anchors.shape[0] - num_positive_anchors)
+
+    prop = sum(positive_anchors_count) / sum(negative_anchors_count)    
+    missed_annotations_stats = stats.describe(missed_annotations_count)
+    positive_anchors_stats = stats.describe(positive_anchors_count)
+    negative_anchors_stats = stats.describe(negative_anchors_count)
+
+    print("##############################")
+    print(f"\nResults for parameters:\nPositive IoU: {args.positive_overlap_iou}\nNegative IoU: {args.negative_overlap_iou}")
+    print(f"\nAnchor parameters: \nsizes: {anchor_params.sizes}\nstrides: {anchor_params.strides}\nratios: {anchor_params.ratios}\nscales: {anchor_params.scales}")
+    print("\n-------")
+    print(f"\nTotal annotations: {sum(annotations_count)}")
+    print(f"\nMissed annotations: \nMin, Max: {missed_annotations_stats.minmax} \nMean: {missed_annotations_stats.mean:.3f}")
+    print(f"\nProportion of pos/neg anchors: {prop:.5f}")
+    print(f"\nPositive anchors: \nMin, Max: {positive_anchors_stats.minmax}\nMean: {positive_anchors_stats.mean:.3f}")
+    print(f"\nNegative anchors: \nMin, Max: {negative_anchors_stats.minmax}\nMean: {negative_anchors_stats.mean:.3f}")
+
+    print("\n")
 
 def run(generator, args, anchor_params):
     """ Main loop.
@@ -215,13 +288,26 @@ def run(generator, args, anchor_params):
                 # draw annotations in red
                 draw_annotations(image, annotations, color=(0, 0, 255), label_to_name=generator.label_to_name)
 
-                # draw regressed anchors in green to override most red annotations
-                # result is that annotations without anchors are red, with anchors are green
-                draw_boxes(image, annotations['bboxes'][max_indices[positive_indices], :], (0, 255, 0))
+                # Draw regressed anchors in green to override most red annotations
+                # Result is that annotations without anchors are red, with anchors are green
+                draw_boxes(image, annotations['bboxes'][max_indices[positive_indices], :], (0, 255, 0), thickness=1)
+                num_positive_anchors = annotations['bboxes'][max_indices[positive_indices], :].shape[0]
+                num_negative_anchors = anchors.shape[0] - num_positive_anchors
+                print(f"Annotations for image: \t\t{annotations['bboxes'].shape[0]}")
+                print(f"Positive anchors for image: \t{num_positive_anchors}")
+                print(f"Negative anchors for image: \t{num_negative_anchors}")
+                print(f"Proportion of pos/neg anchors: \t{num_positive_anchors / (num_negative_anchors):.3f}\n")
 
         cv2.imshow('Image', image)
-        if cv2.waitKey() == ord('q'):
-            return False
+
+        while True:
+            key = cv2.waitKey()
+            if key == ord('q'):
+                return False
+
+            elif key == ord('n'):
+                break
+
     return True
 
 
@@ -246,14 +332,16 @@ def main(args=None):
     if args.config and 'anchor_parameters' in args.config:
         anchor_params = parse_anchor_parameters(args.config)
 
-    # create the display window
-    cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
-
     if args.loop:
+        cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
         while run(generator, args, anchor_params=anchor_params):
             pass
     else:
-        run(generator, args, anchor_params=anchor_params)
+        if(args.stats):
+            calculate_stats(generator, args, anchor_params=anchor_params)
+        else:
+            cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
+            run(generator, args, anchor_params=anchor_params)
 
 
 if __name__ == '__main__':
