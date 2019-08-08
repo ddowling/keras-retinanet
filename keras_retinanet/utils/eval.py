@@ -21,6 +21,8 @@ import keras
 import numpy as np
 import os
 
+import matplotlib.pyplot as plt
+import pickle
 import cv2
 import progressbar
 assert(callable(progressbar.progressbar)), "Using wrong progressbar module, install 'progressbar2' instead."
@@ -147,20 +149,24 @@ def _get_annotations(generator):
 def evaluate(
     generator,
     model,
+    epoch=None,
     iou_threshold=0.5,
     score_threshold=0.05,
     max_detections=100,
-    save_path=None
+    save_path=None,
+    plot_interval=5
 ):
     """ Evaluate a given dataset using a given model.
 
     # Arguments
         generator       : The generator that represents the dataset to evaluate.
         model           : The model to evaluate.
+        epoch           : The current epoch
         iou_threshold   : The threshold used to consider when a detection is positive or negative.
         score_threshold : The score confidence threshold to use for detections.
         max_detections  : The maximum number of detections to use per image.
         save_path       : The path to save images with visualized detections to.
+        plot_interval   : Inteval at which the Precision-Recall curve should be plotted & saved
     # Returns
         A dict mapping class names to mAP scores.
     """
@@ -168,6 +174,7 @@ def evaluate(
     all_detections     = _get_detections(generator, model, score_threshold=score_threshold, max_detections=max_detections, save_path=save_path)
     all_annotations    = _get_annotations(generator)
     average_precisions = {}
+    recall_precision_tuples = []
 
     # all_detections = pickle.load(open('all_detections.pkl', 'rb'))
     # all_annotations = pickle.load(open('all_annotations.pkl', 'rb'))
@@ -228,8 +235,45 @@ def evaluate(
         recall    = true_positives / num_annotations
         precision = true_positives / np.maximum(true_positives + false_positives, np.finfo(np.float64).eps)
 
+        # Save values for plotting
+        recall_precision_tuples.append((recall, precision, generator.label_to_name(label)))
+
         # compute average precision
         average_precision  = _compute_ap(recall, precision)
         average_precisions[label] = average_precision, num_annotations
 
-    return average_precisions
+    # Create precision recall curve if an epoch is specified
+    if(epoch is not None):
+        fig = None
+        if(epoch % plot_interval == 0):
+            fig = create_curve(recall_precision_tuples, "Precision-Recall Curve")
+
+        return average_precisions, fig
+
+    else:
+        return average_precisions
+
+def create_curve(recall_precision_tuples, title):
+    
+    # Create a 500x500 pixel plot
+    fig = plt.figure(figsize=(5, 5), dpi=100)
+    ax = fig.add_subplot(111)
+
+    # Add a line for each set of precision-recall values
+    # Replace lw=2 with '-ok' for plotting points + line
+    for recall, precision, label in recall_precision_tuples:
+        line, = ax.plot(recall, precision, lw=1, label=label)
+
+    # Set up the x and y axis
+    ax.set_title(title)
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_xlim([0.0,1.1])
+    ax.set_ylim([0.0,1.1])
+
+    # Custom ticks
+    ax.xaxis.set_ticks(np.arange(0.0, 1.1, 0.1))
+    ax.yaxis.set_ticks(np.arange(0.0, 1.1, 0.1))
+
+    plt.legend(loc='upper right')
+    return fig

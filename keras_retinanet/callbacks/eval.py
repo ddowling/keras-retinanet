@@ -14,9 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import io
 import keras
-from ..utils.eval import evaluate
+import matplotlib.pyplot as plt
+import tensorflow as tf
 
+from ..utils.eval import evaluate
 
 class Evaluate(keras.callbacks.Callback):
     """ Evaluation callback for arbitrary datasets.
@@ -60,9 +63,10 @@ class Evaluate(keras.callbacks.Callback):
         logs = logs or {}
 
         # run evaluation
-        average_precisions = evaluate(
+        average_precisions, fig = evaluate(
             self.generator,
             self.model,
+            epoch,
             iou_threshold=self.iou_threshold,
             score_threshold=self.score_threshold,
             max_detections=self.max_detections,
@@ -89,9 +93,46 @@ class Evaluate(keras.callbacks.Callback):
             summary_value = summary.value.add()
             summary_value.simple_value = self.mean_ap
             summary_value.tag = "mAP"
+
+            if fig is not None:
+                summary_image = summary.value.add()
+                summary_image.image.encoded_image_string = self.plot_to_bytes(fig)
+                summary_image.tag = "Precision-Recall"
+                width, height = (fig.get_size_inches()*fig.dpi).astype(int)
+                summary_image.image.height = height
+                summary_image.image.width = width
+
             self.tensorboard.writer.add_summary(summary, epoch)
 
         logs['mAP'] = self.mean_ap
 
         if self.verbose == 1:
             print('mAP: {:.4f}'.format(self.mean_ap))
+
+    def plot_to_image(self, figure):
+        """ Converts the matplotlib plot specified by 'figure' to a PNG image and returns it.
+            The supplied figure is closed and inaccessible after this call.
+        """
+        # Save the plot to a PNG in memory.
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        
+        plt.close(figure)
+        buf.seek(0)
+
+        # Convert PNG buffer to TF image
+        image = tf.image.decode_png(buf.getvalue(), channels=4)
+        
+        # Add the batch dimension
+        image = tf.expand_dims(image, 0)
+        return images
+
+    def plot_to_bytes(self, figure):
+        """ Convert plot to a PNG in memory and return the bytes
+        """
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        
+        plt.close(figure)
+        buf.seek(0)
+        return buf.getvalue()
