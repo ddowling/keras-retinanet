@@ -4,3 +4,10 @@ __pycache__/
 *.so
 /.pytest_cache
 /.cache
+
+# Temporary//local folders to ignore
+data/
+logs/
+build/
+
+.vscode/
