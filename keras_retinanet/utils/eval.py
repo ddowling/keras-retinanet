@@ -277,3 +277,121 @@ def create_curve(recall_precision_tuples, title):
 
     plt.legend(loc='upper right')
     return fig
+
+
+###    
+### Custom Evaluation for Conductors
+###
+
+def compute_conductor_overlap(detected_box, main_annot, left_annot, right_annot):
+    """ Computes conductor overlap by taking into account the neighbouring annotations. The default RetinaNet implementation uses the
+        largest overlapping annoation to calculate IoU, but this doesn't make sense for our case. As we split the long and thin Conductors
+        arbitrarily (to make more 'squarish' objects), there is no 'correct' ground-truth annotation. Visual explanation:
+
+        Diagram keys:
+        - Single thin line      = Conductor
+        - Double border box     = Largest overlapping ground-truth annotation (as determined by `compute_overlap`)
+        - Single border box     = Network's guess at where object is
+        - Dashed border boxe    = Neighbouring ground-truth annotations
+        - The '#' area          = Correctly identified area                
+        
+        RetinaNet would compute this:
+
+                  ┌──────────────────┐                     
+        ┌ ─ ─ ─ ─ ┼ ─ ─ ─ ╔══════════│═══════╗ ─ ─ ─ ─ ─ ┐ 
+                  │      │║##########│       ║│            
+       ─┼─────────│───────╬##########│───────╬───────────┼─
+                  │      │║##########│       ║│            
+        └ ─ ─ ─ ─ ┼ ─ ─ ─ ╚══════════│═══════╝ ─ ─ ─ ─ ─ ┘ 
+                  └──────────────────┘                          
+
+        But the correct solution is to blend neighbouring annotations to match the network's prediction, and then compute the IoU
+        (thick-border box is the blended annotation):
+
+                  ┌──────────────────┐                     
+        ┌ ─ ─ ─ ─ ┏━━━━━━━━━━━━━━━━━━┓═══════╗┌ ─ ─ ─ ─ ─  
+                  ┃##################┃       ║           │ 
+       ─┼─────────┃##################┃───────╬┼────────────
+                  ┃##################┃       ║           │ 
+        └ ─ ─ ─ ─ ┗━━━━━━━━━━━━━━━━━━┛═══════╝└ ─ ─ ─ ─ ─  
+                  └──────────────────┘                     
+        
+        Note: Above ASCII representations are a bit simplified as it's hard to draw rotated rectangles and polygons.
+
+        # Arguments
+            detected_box   : Network's prediction (ndarray)
+            main_annot      : Ground-truth annotation with largest overlap against network's detection (ndarray)
+            left_annot      : Annotation to the left of `main_annot` (ndarray), or None if it doesn't exist 
+            right_annot     : Annotation to the right of `main_annot` (ndarray), or None if it doesn't exist 
+
+        # Returns
+            The computed overlap (IoU) between `detected_box` and given annotations
+    """
+
+    assert main_annot.shape[0] == detected_box.shape[0], "annotation shape '{}' vs detected box shape '{}'".format(main_annot.shape[0], detected_box.shape[0])
+    assert main_annot.shape[0] == 4
+
+    pc = pyclipper.Pyclipper()
+    ext_main_annot = main_annot
+
+    # Easy way to index coordinates
+    x1, _, x2, _ = (0,1,2,3)
+
+    ## Shrink the edges (both left and right) of the `main` annotation if they extend past the detection.
+    # Visual example for left edge:
+    #
+    #    ┌────────────┐       ┌────────────┐
+    # ╔═══════════╗   │       ╔════════╗   │
+    # ║  │        ║   │   ->  ║        ║   │
+    # ╚═══════════╝   │       ╚════════╝   │
+    #    └────────────┘       └────────────┘
+    #
+
+    # Left edge
+    if(ext_main_annot[x1] < detected_box[x1]):
+        ext_main_annot[x1] = detected_box[x1]
+
+    # Right edge
+    if(ext_main_annot[x2] > detected_box[x2]):
+        ext_main_annot[x2] = detected_box[x2]
+
+    pc.AddPath(box_to_path(ext_main_annot), pyclipper.PT_CLIP, True)
+
+    ## Now we look at extending the edges of the `main` annotation by using it's neighbours (see diagram in docstring above)
+    # The minimum length threshold to check against is 1. This is to guard against situations where we end up with 0 length boxes, as PyClipper
+    # truncates values, so a length of 0.8 = 0.0
+
+    # Check if left edge of detected box extends past the `main` annotation
+    if(not(left_annot is None) and ((main_annot[x1] - detected_box[x1]) > 1)):
+        ext_left_annot = left_annot
+
+        # Only (likely) require a portion of the neighbouring annotation, so shrink the edges
+        ext_left_annot[x1] = detected_box[x1]
+        ext_left_annot[x2] = main_annot[x1]
+        pc.AddPath(box_to_path(ext_left_annot), pyclipper.PT_CLIP, True)
+    
+    # Check the right edge
+    if(not(right_annot is None) and ((detected_box[x2] - main_annot[x2]) > 1)):
+        ext_right_annot = right_annot
+        ext_right_annot[x1] = main_annot[x2]
+        ext_right_annot[x2] = detected_box[x2]
+        pc.AddPath(box_to_path(ext_right_annot), pyclipper.PT_CLIP, True)
+
+    # Add the detected box as the subject and clip
+    pc.AddPath(box_to_path(detected_box), pyclipper.PT_SUBJECT, True)
+    intersection_poly = pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_EVENODD, pyclipper.PFT_EVENODD)
+    union_poly = pc.Execute(pyclipper.CT_UNION, pyclipper.PFT_EVENODD, pyclipper.PFT_EVENODD)
+
+    # If there is no intersection, return 0.0
+    if(len(intersection_poly) == 0):
+        return 0.0
+
+    intersection_area = pyclipper.Area(intersection_poly[0])
+    union_area = pyclipper.Area(union_poly[0])
+
+    return intersection_area / union_area
+
+def box_to_path(box):
+    """Convert an array of coordinates [x1, y1, x2, y2] to tuple that PyClipper accepts: (((x1, y1), (x2, y1), (x2, y2), (x1, y2)))"""
+    x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+    return ((x1, y1), (x2, y1), (x2, y2), (x1, y2))
