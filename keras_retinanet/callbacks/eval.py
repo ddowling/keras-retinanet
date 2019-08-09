@@ -92,7 +92,6 @@ class Evaluate(keras.callbacks.Callback):
             self.mean_ap = sum(precisions) / sum(x > 0 for x in total_instances)
 
         if self.tensorboard is not None and self.tensorboard.writer is not None:
-            import tensorflow as tf
             summary = tf.Summary()
             summary_value = summary.value.add()
             summary_value.simple_value = self.mean_ap
@@ -129,7 +128,7 @@ class Evaluate(keras.callbacks.Callback):
         
         # Add the batch dimension
         image = tf.expand_dims(image, 0)
-        return images
+        return image
 
     def plot_to_bytes(self, figure):
         """ Convert plot to a PNG in memory and return the bytes
