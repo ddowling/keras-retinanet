@@ -241,7 +241,15 @@ def evaluate(
         return average_precisions
 
 def normal_evaluate(detection, annotations, detected_annotations, iou_threshold):
-    """ 
+    """ Definition of True Positive (TP) & False Positive (FP):
+        - TP: Detection has an overlap with 'best' ground-truth annotation greater than `iou_threshold` AND this ground-truth
+              annotation is unique (i.e. isn't in `detection_annotations`)
+        - FP: All other scenarios
+    # Returns
+        A tuple: (true_positive, false_positive, score, assigned_annotation).
+        - `true_positive` and `false_positive` are either '0' or '1'
+        - `score` is always the confidence score for detection
+        - `assigned_annotation` is either an index value (int) or None. 
     """
     true_positive, false_positive, assigned_annotation = None, None, None
     score = detection[4]
@@ -274,6 +282,24 @@ def normal_evaluate(detection, annotations, detected_annotations, iou_threshold)
 ###
 
 def conductor_evaluate(detection, annotations, detected_annotations, iou_threshold):
+    """ Definition of True Positive (tp) & False Positive (fp):
+        - TP: Detection has an overlap with ground-truth annotation(s) greater than `iou_threshold` AND this ground-truth
+              annotation is unique (i.e. isn't in `detection_annotations`)
+        - FP: 1. No ground-truth annotations exist, so by default the detection is FP
+              2. The computed overlap is below `iou_threshold`
+
+        The scenario where overlap > iou_threshold, but annotation is not unique, is completely ignored. As duplicate detections
+        aren't harmful in the case of conductor detection.
+
+        Note: The overlap for the detection takes into account neighboring annotations, see `compute_conductor_overlap` for details.
+
+    # Returns
+        A tuple: (true_positive, false_positive, score, assigned_annotation).
+        - All values `None` implies that this detection should be ignored, nether a TP for FP
+        - `true_positive` and `false_positive` are either '0' or '1'
+        - `score` is the confidence score for detection
+        - `assigned_annotation` is either an index value (int) or None. 
+    """
     true_positive, false_positive, assigned_annotation, score = None, None, None, None
     score_index = 4
 
