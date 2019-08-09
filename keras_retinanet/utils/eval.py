@@ -455,6 +455,10 @@ def box_to_path(box):
     x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
     return ((x1, y1), (x2, y1), (x2, y2), (x1, y2))
 
+###
+### Drawing Utilities
+###
+
 def create_curve(recall_precision_tuples, title):
     
     # Create a 500x500 pixel plot
@@ -479,3 +483,37 @@ def create_curve(recall_precision_tuples, title):
 
     plt.legend(loc='upper right')
     return fig
+
+def show_annotations(raw_image, detection, annotations, assigned_annotation, label, label_to_name, neighbour_annotation_color=(0, 255, 200)):
+    """ Displays image with detection (red), assigned_annotation (green), and neighbouring annotations (yellow) in a plot.
+
+    # Usage
+        Example with generator: `show_annotations(generator.load_image(i), d, annotations, assigned_annotation, label, generator.label_to_name)`
+    """
+    detection_box = np.array([[detection[0], detection[1], detection[2], detection[3]]], dtype=np.float32)
+    confidence = np.array([detection[4]], dtype=np.float32)
+
+    draw_detections(raw_image, detection_box, confidence, np.array([label]), label_to_name=label_to_name, score_threshold=0.0)
+    
+    annots = annotations[assigned_annotation]
+    annot = np.expand_dims(np.append(annots[0], label), 0)
+    draw_annotations(raw_image, annot, label_to_name=label_to_name)
+
+    # Draw neighbouring annotations if they exist
+    if(assigned_annotation - 1 > 0):
+        annots = annotations[assigned_annotation - 1]
+        annot = np.expand_dims(np.append(annots[0], label), 0)
+        draw_annotations(raw_image, annot, color=neighbour_annotation_color, label_to_name=label_to_name)
+
+    if(assigned_annotation + 1 < annotations.shape[0]):
+        annots = annotations[assigned_annotation + 1]
+        annot = np.expand_dims(np.append(annots[0], label), 0)
+        draw_annotations(raw_image, annot, color=neighbour_annotation_color, label_to_name=label_to_name)
+
+    # Resize the image for display
+    raw_image = cv2.resize(raw_image, None, fx=0.25, fy=0.25)
+    plt_image = cv2.cvtColor(raw_image, cv2.COLOR_BGR2RGB)
+    
+    plt.figure(figsize=(12, 8))
+    plt.imshow(plt_image)
+    plt.show()
