@@ -28,6 +28,7 @@ class Evaluate(keras.callbacks.Callback):
     def __init__(
         self,
         generator,
+        conductor_eval,
         iou_threshold=0.5,
         score_threshold=0.05,
         max_detections=100,
@@ -40,6 +41,7 @@ class Evaluate(keras.callbacks.Callback):
 
         # Arguments
             generator        : The generator that represents the dataset to evaluate.
+            conductor_eval   : Boolean that specifies if conductor-detection specific mAP calculation should be used for evaluation
             iou_threshold    : The threshold used to consider when a detection is positive or negative.
             score_threshold  : The score confidence threshold to use for detections.
             max_detections   : The maximum number of detections to use per image.
@@ -49,6 +51,7 @@ class Evaluate(keras.callbacks.Callback):
             verbose          : Set the verbosity level, by default this is set to 1.
         """
         self.generator       = generator
+        self.conductor_eval  = conductor_eval
         self.iou_threshold   = iou_threshold
         self.score_threshold = score_threshold
         self.max_detections  = max_detections
@@ -66,6 +69,7 @@ class Evaluate(keras.callbacks.Callback):
         average_precisions, fig = evaluate(
             self.generator,
             self.model,
+            self.conductor_eval,
             epoch,
             iou_threshold=self.iou_threshold,
             score_threshold=self.score_threshold,

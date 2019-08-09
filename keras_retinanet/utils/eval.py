@@ -22,7 +22,7 @@ import numpy as np
 import os
 
 import matplotlib.pyplot as plt
-import pickle
+import pyclipper
 import cv2
 import progressbar
 assert(callable(progressbar.progressbar)), "Using wrong progressbar module, install 'progressbar2' instead."
@@ -149,6 +149,7 @@ def _get_annotations(generator):
 def evaluate(
     generator,
     model,
+    conductor_eval,
     epoch=None,
     iou_threshold=0.5,
     score_threshold=0.05,
@@ -161,6 +162,7 @@ def evaluate(
     # Arguments
         generator       : The generator that represents the dataset to evaluate.
         model           : The model to evaluate.
+        conductor_eval  : Boolean that specifies if conductor-detection specific mAP calculation should be used for evaluation
         epoch           : The current epoch
         iou_threshold   : The threshold used to consider when a detection is positive or negative.
         score_threshold : The score confidence threshold to use for detections.
@@ -175,11 +177,6 @@ def evaluate(
     all_annotations    = _get_annotations(generator)
     average_precisions = {}
     recall_precision_tuples = []
-
-    # all_detections = pickle.load(open('all_detections.pkl', 'rb'))
-    # all_annotations = pickle.load(open('all_annotations.pkl', 'rb'))
-    # pickle.dump(all_detections, open('all_detections.pkl', 'wb'))
-    # pickle.dump(all_annotations, open('all_annotations.pkl', 'wb'))
 
     # process detections and annotations
     for label in range(generator.num_classes()):
@@ -198,24 +195,14 @@ def evaluate(
             detected_annotations = []
 
             for d in detections:
-                scores = np.append(scores, d[4])
-
-                if annotations.shape[0] == 0:
-                    false_positives = np.append(false_positives, 1)
-                    true_positives  = np.append(true_positives, 0)
-                    continue
-
-                overlaps            = compute_overlap(np.expand_dims(d, axis=0), annotations)
-                assigned_annotation = np.argmax(overlaps, axis=1)
-                max_overlap         = overlaps[0, assigned_annotation]
-
-                if max_overlap >= iou_threshold and assigned_annotation not in detected_annotations:
-                    false_positives = np.append(false_positives, 0)
-                    true_positives  = np.append(true_positives, 1)
-                    detected_annotations.append(assigned_annotation)
-                else:
-                    false_positives = np.append(false_positives, 1)
-                    true_positives  = np.append(true_positives, 0)
+                eval_fn = conductor_evaluate if conductor_eval else normal_evaluate
+                tp, fp, score, assigned_annotation = eval_fn(d, annotations, detected_annotations, iou_threshold)
+                
+                # Append values if they are valid
+                if(fp is not None): false_positives = np.append(false_positives, fp)
+                if(tp is not None): true_positives  = np.append(true_positives, tp)
+                if(score is not None): scores = np.append(scores, d[4])
+                if(assigned_annotation is not None): detected_annotations.append(assigned_annotation)
 
         # no annotations -> AP for this class is 0 (is this correct?)
         if num_annotations == 0:
@@ -253,35 +240,81 @@ def evaluate(
     else:
         return average_precisions
 
-def create_curve(recall_precision_tuples, title):
-    
-    # Create a 500x500 pixel plot
-    fig = plt.figure(figsize=(5, 5), dpi=100)
-    ax = fig.add_subplot(111)
+def normal_evaluate(detection, annotations, detected_annotations, iou_threshold):
+    """ 
+    """
+    true_positive, false_positive, assigned_annotation = None, None, None
+    score = detection[4]
 
-    # Add a line for each set of precision-recall values
-    # Replace lw=2 with '-ok' for plotting points + line
-    for recall, precision, label in recall_precision_tuples:
-        line, = ax.plot(recall, precision, lw=1, label=label)
+    # If there are no ground-truth annotations, the network detection is a false positive
+    if annotations.shape[0] == 0:
+        false_positive = 1
+        true_positive = 0
+        return (true_positive, false_positive, score, assigned_annotation)
 
-    # Set up the x and y axis
-    ax.set_title(title)
-    ax.set_xlabel("Recall")
-    ax.set_ylabel("Precision")
-    ax.set_xlim([0.0,1.1])
-    ax.set_ylim([0.0,1.1])
+    overlaps = compute_overlap(np.expand_dims(detection, axis=0), annotations)
+    assigned_annotation = np.argmax(overlaps, axis=1)
+    max_overlap = overlaps[0, assigned_annotation]
 
-    # Custom ticks
-    ax.xaxis.set_ticks(np.arange(0.0, 1.1, 0.1))
-    ax.yaxis.set_ticks(np.arange(0.0, 1.1, 0.1))
+    # True positive
+    if max_overlap >= iou_threshold and assigned_annotation not in detected_annotations:
+        false_positive = 0
+        true_positive  = 1
 
-    plt.legend(loc='upper right')
-    return fig
+    # False positive
+    else:
+        false_positive = 1
+        true_positive  = 0
+        assigned_annotation = None
 
+    return (true_positive, false_positive, score, assigned_annotation)
 
 ###    
 ### Custom Evaluation for Conductors
 ###
+
+def conductor_evaluate(detection, annotations, detected_annotations, iou_threshold):
+    true_positive, false_positive, assigned_annotation, score = None, None, None, None
+    score_index = 4
+
+    # If there are no ground-truth annotations, the network detection is a false positive
+    if annotations.shape[0] == 0:
+        false_positive = 1
+        true_positive = 0
+        return (true_positive, false_positive, detection[score_index], assigned_annotation)
+
+    overlaps = compute_overlap(np.expand_dims(detection, axis=0), annotations)
+    assigned_annotation = np.argmax(overlaps, axis=1)
+    initial_overlap = overlaps[0, assigned_annotation]
+
+    # Get neighbouring annotations (if they exist)
+    left_annot = None if (assigned_annotation - 1) < 0 else annotations[assigned_annotation - 1][0]
+    right_annot = None if (assigned_annotation + 1) >= annotations.shape[0] else annotations[assigned_annotation + 1][0]
+
+    max_overlap = compute_conductor_overlap(detected_box=detection[:4], main_annot=annotations[assigned_annotation][0], left_annot=left_annot, right_annot=right_annot)
+    max_overlap = initial_overlap if max_overlap is None else np.array([max_overlap], dtype=np.float32)
+
+    # True positive
+    if max_overlap >= iou_threshold and assigned_annotation not in detected_annotations:
+        false_positive = 0
+        true_positive  = 1
+        score = detection[4]
+
+    # False positive
+    elif max_overlap < iou_threshold:
+        false_positive = 1
+        true_positive  = 0
+        score = detection[4]
+        assigned_annotation = None
+
+    # Duplicate detection - ignore this case
+    elif assigned_annotation in detected_annotations:
+        false_positive = None
+        true_positive  = None
+        score = detection = None
+        assigned_annotation = None
+
+    return (true_positive, false_positive, score, assigned_annotation)
 
 def compute_conductor_overlap(detected_box, main_annot, left_annot, right_annot):
     """ Computes conductor overlap by taking into account the neighbouring annotations. The default RetinaNet implementation uses the
@@ -395,3 +428,28 @@ def box_to_path(box):
     """Convert an array of coordinates [x1, y1, x2, y2] to tuple that PyClipper accepts: (((x1, y1), (x2, y1), (x2, y2), (x1, y2)))"""
     x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
     return ((x1, y1), (x2, y1), (x2, y2), (x1, y2))
+
+def create_curve(recall_precision_tuples, title):
+    
+    # Create a 500x500 pixel plot
+    fig = plt.figure(figsize=(5, 5), dpi=100)
+    ax = fig.add_subplot(111)
+
+    # Add a line for each set of precision-recall values
+    # Replace lw=2 with '-ok' for plotting points + line
+    for recall, precision, label in recall_precision_tuples:
+        _, = ax.plot(recall, precision, lw=1, label=label)
+
+    # Set up the x and y axis
+    ax.set_title(title)
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    ax.set_xlim([0.0,1.1])
+    ax.set_ylim([0.0,1.1])
+
+    # Custom ticks
+    ax.xaxis.set_ticks(np.arange(0.0, 1.1, 0.1))
+    ax.yaxis.set_ticks(np.arange(0.0, 1.1, 0.1))
+
+    plt.legend(loc='upper right')
+    return fig
